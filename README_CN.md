@@ -4,6 +4,17 @@
 
 这是 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) 的 Plus 版本，在原有基础上增加了第三方供应商的支持。
 
+## 快速部署
+
+### 部署到 Deno Deploy
+
+[![Deploy to Deno Deploy](https://deno.com/deno-deploy-button.svg)](https://dash.deno.com/new?url=https://raw.githubusercontent.com/linlang781/CLIProxyAPIPlus/main/main.ts&env=API_KEYS,MGMT_KEY)
+
+点击上方按钮一键部署到 Deno Deploy。你需要配置：
+- `API_KEYS`: 你的 API 认证密钥（逗号分隔）
+- `MGMT_KEY`: 管理 API 密钥（可选）
+- `CONFIG_YAML`: 完整的 YAML 配置（可选，详见 `.env.deno.example`）
+
 所有的第三方供应商支持都由第三方社区维护者提供，CLIProxyAPI 不提供技术支持。如需取得支持，请与对应的社区维护者联系。
 
 该 Plus 版本的主线功能与主线功能强制同步。

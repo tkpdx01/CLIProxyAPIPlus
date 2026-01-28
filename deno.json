@@ -1,0 +1,27 @@
+{
+  "name": "@router-for-me/cliproxyapi-plus",
+  "version": "1.0.0",
+  "exports": "./main.ts",
+  "tasks": {
+    "dev": "deno run -A --watch main.ts",
+    "start": "deno run -A main.ts"
+  },
+  "compilerOptions": {
+    "lib": ["deno.window"],
+    "strict": true
+  },
+  "deploy": {
+    "project": "cliproxyapi-plus",
+    "entrypoint": "main.ts",
+    "include": [
+      "main.ts",
+      "deno/bin/"
+    ],
+    "exclude": [
+      ".git/",
+      "node_modules/",
+      "*.test.ts"
+    ]
+  }
+}
+

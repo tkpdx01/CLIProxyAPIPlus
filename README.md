@@ -4,6 +4,17 @@ English | [Chinese](README_CN.md)
 
 This is the Plus version of [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI), adding support for third-party providers on top of the mainline project.
 
+## Quick Deploy
+
+### Deploy to Deno Deploy
+
+[![Deploy to Deno Deploy](https://deno.com/deno-deploy-button.svg)](https://dash.deno.com/new?url=https://raw.githubusercontent.com/linlang781/CLIProxyAPIPlus/main/main.ts&env=API_KEYS,MGMT_KEY)
+
+Click the button above to deploy to Deno Deploy in one click. You'll need to configure:
+- `API_KEYS`: Your API authentication keys (comma-separated)
+- `MGMT_KEY`: Management API secret key (optional)
+- `CONFIG_YAML`: Full YAML configuration (optional, see `.env.deno.example` for details)
+
 All third-party provider support is maintained by community contributors; CLIProxyAPI does not provide technical support. Please contact the corresponding community maintainer if you need assistance.
 
 The Plus release stays in lockstep with the mainline features.
