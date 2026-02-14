@@ -255,6 +255,18 @@ nonstream-keepalive-interval: 0
 #      alias: "gemini-claude-sonnet-4-5-thinking"
 #    - name: "claude-opus-4-5-thinking"
 #      alias: "gemini-claude-opus-4-5-thinking"
+#    - name: "gemini-2.5-flash"
+#      alias: "claude-haiku-4-5-20251001"
+#      fork: true
+#    - name: "gemini-2.5-flash"
+#      alias: "claude-haiku-4-5"
+#      fork: true
+#    - name: "gemini-2.5-flash"
+#      alias: "claude-3-5-haiku-20241022"
+#      fork: true
+#    - name: "gemini-2.5-flash"
+#      alias: "claude-3-haiku-20240307"
+#      fork: true
 #   gemini-cli:
 #     - name: "gemini-2.5-pro"          # original model name under this channel
 #       alias: "g2.5p"                  # client-visible alias

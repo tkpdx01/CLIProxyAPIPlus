@@ -700,48 +700,9 @@ func (s *Server) serveManagementControlPanel(c *gin.Context) {
 		}
 	}
 
-	content, err := os.ReadFile(filePath)
-	if err != nil {
-		log.WithError(err).Error("failed to read management control panel asset")
-		c.AbortWithStatus(http.StatusInternalServerError)
-		return
-	}
-
-	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(ensureHTMLTitle(string(content), "502 Bad Gateway")))
+	c.File(filePath)
 }
 
-func ensureHTMLTitle(htmlContent, title string) string {
-	title = strings.TrimSpace(title)
-	if title == "" {
-		return htmlContent
-	}
-
-	lower := strings.ToLower(htmlContent)
-
-	titleStart := strings.Index(lower, "<title")
-	if titleStart >= 0 {
-		openEndRel := strings.Index(lower[titleStart:], ">")
-		if openEndRel >= 0 {
-			openEnd := titleStart + openEndRel + 1
-			closeRel := strings.Index(lower[openEnd:], "</title>")
-			if closeRel >= 0 {
-				closeStart := openEnd + closeRel
-				return htmlContent[:openEnd] + title + htmlContent[closeStart:]
-			}
-		}
-	}
-
-	headStart := strings.Index(lower, "<head")
-	if headStart >= 0 {
-		headEndRel := strings.Index(lower[headStart:], ">")
-		if headEndRel >= 0 {
-			insertPos := headStart + headEndRel + 1
-			return htmlContent[:insertPos] + "<title>" + title + "</title>" + htmlContent[insertPos:]
-		}
-	}
-
-	return "<title>" + title + "</title>" + htmlContent
-}
 
 func (s *Server) enableKeepAlive(timeout time.Duration, onTimeout func()) {
 	if timeout <= 0 || onTimeout == nil {
