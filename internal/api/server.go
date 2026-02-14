@@ -342,16 +342,20 @@ func (s *Server) setupRoutes() {
 		v1beta.GET("/models/*action", geminiHandlers.GeminiGetHandler)
 	}
 
-	// Root endpoint
+	// Root endpoint - disguised as 502 Bad Gateway content, but returns 200 OK
 	s.engine.GET("/", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"message": "CLI Proxy API Server",
-			"endpoints": []string{
-				"POST /v1/chat/completions",
-				"POST /v1/completions",
-				"GET /v1/models",
-			},
-		})
+		c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(`<html>
+<head><title>502 Bad Gateway</title></head>
+<body>
+<center><h1>502 Bad Gateway</h1></center>
+<hr><center>nginx/1.27.3</center>
+</body>
+</html>`))
+	})
+
+	// Favicon - return empty to avoid 404
+	s.engine.GET("/favicon.ico", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
 	})
 
 	// Event logging endpoint - handles Claude Code telemetry requests
@@ -696,7 +700,47 @@ func (s *Server) serveManagementControlPanel(c *gin.Context) {
 		}
 	}
 
-	c.File(filePath)
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		log.WithError(err).Error("failed to read management control panel asset")
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+
+	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(ensureHTMLTitle(string(content), "502 Bad Gateway")))
+}
+
+func ensureHTMLTitle(htmlContent, title string) string {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return htmlContent
+	}
+
+	lower := strings.ToLower(htmlContent)
+
+	titleStart := strings.Index(lower, "<title")
+	if titleStart >= 0 {
+		openEndRel := strings.Index(lower[titleStart:], ">")
+		if openEndRel >= 0 {
+			openEnd := titleStart + openEndRel + 1
+			closeRel := strings.Index(lower[openEnd:], "</title>")
+			if closeRel >= 0 {
+				closeStart := openEnd + closeRel
+				return htmlContent[:openEnd] + title + htmlContent[closeStart:]
+			}
+		}
+	}
+
+	headStart := strings.Index(lower, "<head")
+	if headStart >= 0 {
+		headEndRel := strings.Index(lower[headStart:], ">")
+		if headEndRel >= 0 {
+			insertPos := headStart + headEndRel + 1
+			return htmlContent[:insertPos] + "<title>" + title + "</title>" + htmlContent[insertPos:]
+		}
+	}
+
+	return "<title>" + title + "</title>" + htmlContent
 }
 
 func (s *Server) enableKeepAlive(timeout time.Duration, onTimeout func()) {
