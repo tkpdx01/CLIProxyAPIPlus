@@ -19,6 +19,10 @@ import (
 //   - codex
 //   - qwen
 //   - iflow
+//   - kiro
+//   - github-copilot
+//   - kiro
+//   - amazonq
 //   - antigravity (returns static overrides only)
 func GetStaticModelDefinitionsByChannel(channel string) []*ModelInfo {
 	key := strings.ToLower(strings.TrimSpace(channel))
@@ -39,6 +43,12 @@ func GetStaticModelDefinitionsByChannel(channel string) []*ModelInfo {
 		return GetQwenModels()
 	case "iflow":
 		return GetIFlowModels()
+	case "github-copilot":
+		return GetGitHubCopilotModels()
+	case "kiro":
+		return GetKiroModels()
+	case "amazonq":
+		return GetAmazonQModels()
 	case "antigravity":
 		cfg := GetAntigravityModelConfig()
 		if len(cfg) == 0 {
@@ -83,6 +93,9 @@ func LookupStaticModelInfo(modelID string) *ModelInfo {
 		GetOpenAIModels(),
 		GetQwenModels(),
 		GetIFlowModels(),
+		GetGitHubCopilotModels(),
+		GetKiroModels(),
+		GetAmazonQModels(),
 	}
 	for _, models := range allModels {
 		for _, m := range models {
@@ -265,6 +278,18 @@ func GetGitHubCopilotModels() []*ModelInfo {
 			SupportedEndpoints:  []string{"/chat/completions"},
 		},
 		{
+			ID:                  "claude-opus-4.6",
+			Object:              "model",
+			Created:             now,
+			OwnedBy:             "github-copilot",
+			Type:                "github-copilot",
+			DisplayName:         "Claude Opus 4.6",
+			Description:         "Anthropic Claude Opus 4.6 via GitHub Copilot",
+			ContextLength:       200000,
+			MaxCompletionTokens: 64000,
+			SupportedEndpoints:  []string{"/chat/completions"},
+		},
+		{
 			ID:                  "claude-sonnet-4",
 			Object:              "model",
 			Created:             now,
@@ -364,6 +389,18 @@ func GetKiroModels() []*ModelInfo {
 			Thinking:            &ThinkingSupport{Min: 1024, Max: 32000, ZeroAllowed: true, DynamicAllowed: true},
 		},
 		{
+			ID:                  "kiro-claude-opus-4-6",
+			Object:              "model",
+			Created:             1736899200, // 2025-01-15
+			OwnedBy:             "aws",
+			Type:                "kiro",
+			DisplayName:         "Kiro Claude Opus 4.6",
+			Description:         "Claude Opus 4.6 via Kiro (2.2x credit)",
+			ContextLength:       200000,
+			MaxCompletionTokens: 64000,
+			Thinking:            &ThinkingSupport{Min: 1024, Max: 32000, ZeroAllowed: true, DynamicAllowed: true},
+		},
+		{
 			ID:                  "kiro-claude-opus-4-5",
 			Object:              "model",
 			Created:             1732752000,
@@ -411,7 +448,100 @@ func GetKiroModels() []*ModelInfo {
 			MaxCompletionTokens: 64000,
 			Thinking:            &ThinkingSupport{Min: 1024, Max: 32000, ZeroAllowed: true, DynamicAllowed: true},
 		},
+		// --- 第三方模型 (通过 Kiro 接入) ---
+		{
+			ID:                  "kiro-deepseek-3-2",
+			Object:              "model",
+			Created:             1732752000,
+			OwnedBy:             "aws",
+			Type:                "kiro",
+			DisplayName:         "Kiro DeepSeek 3.2",
+			Description:         "DeepSeek 3.2 via Kiro",
+			ContextLength:       128000,
+			MaxCompletionTokens: 32768,
+			Thinking:            &ThinkingSupport{Min: 1024, Max: 32000, ZeroAllowed: true, DynamicAllowed: true},
+		},
+		{
+			ID:                  "kiro-minimax-m2-1",
+			Object:              "model",
+			Created:             1732752000,
+			OwnedBy:             "aws",
+			Type:                "kiro",
+			DisplayName:         "Kiro MiniMax M2.1",
+			Description:         "MiniMax M2.1 via Kiro",
+			ContextLength:       200000,
+			MaxCompletionTokens: 64000,
+			Thinking:            &ThinkingSupport{Min: 1024, Max: 32000, ZeroAllowed: true, DynamicAllowed: true},
+		},
+		{
+			ID:                  "kiro-qwen3-coder-next",
+			Object:              "model",
+			Created:             1732752000,
+			OwnedBy:             "aws",
+			Type:                "kiro",
+			DisplayName:         "Kiro Qwen3 Coder Next",
+			Description:         "Qwen3 Coder Next via Kiro",
+			ContextLength:       128000,
+			MaxCompletionTokens: 32768,
+			Thinking:            &ThinkingSupport{Min: 1024, Max: 32000, ZeroAllowed: true, DynamicAllowed: true},
+		},
+		{
+			ID:                  "kiro-gpt-4o",
+			Object:              "model",
+			Created:             1732752000,
+			OwnedBy:             "aws",
+			Type:                "kiro",
+			DisplayName:         "Kiro GPT-4o",
+			Description:         "OpenAI GPT-4o via Kiro",
+			ContextLength:       128000,
+			MaxCompletionTokens: 16384,
+		},
+		{
+			ID:                  "kiro-gpt-4",
+			Object:              "model",
+			Created:             1732752000,
+			OwnedBy:             "aws",
+			Type:                "kiro",
+			DisplayName:         "Kiro GPT-4",
+			Description:         "OpenAI GPT-4 via Kiro",
+			ContextLength:       128000,
+			MaxCompletionTokens: 8192,
+		},
+		{
+			ID:                  "kiro-gpt-4-turbo",
+			Object:              "model",
+			Created:             1732752000,
+			OwnedBy:             "aws",
+			Type:                "kiro",
+			DisplayName:         "Kiro GPT-4 Turbo",
+			Description:         "OpenAI GPT-4 Turbo via Kiro",
+			ContextLength:       128000,
+			MaxCompletionTokens: 16384,
+		},
+		{
+			ID:                  "kiro-gpt-3-5-turbo",
+			Object:              "model",
+			Created:             1732752000,
+			OwnedBy:             "aws",
+			Type:                "kiro",
+			DisplayName:         "Kiro GPT-3.5 Turbo",
+			Description:         "OpenAI GPT-3.5 Turbo via Kiro",
+			ContextLength:       16384,
+			MaxCompletionTokens: 4096,
+		},
 		// --- Agentic Variants (Optimized for coding agents with chunked writes) ---
+		{
+			ID:                  "kiro-claude-opus-4-6-agentic",
+			Object:              "model",
+			Created:             1736899200, // 2025-01-15
+			OwnedBy:             "aws",
+			Type:                "kiro",
+			DisplayName:         "Kiro Claude Opus 4.6 (Agentic)",
+			Description:         "Claude Opus 4.6 optimized for coding agents (chunked writes)",
+			ContextLength:       200000,
+			MaxCompletionTokens: 64000,
+			Thinking:            &ThinkingSupport{Min: 1024, Max: 32000, ZeroAllowed: true, DynamicAllowed: true},
+		},
 		{
 			ID:                  "kiro-claude-opus-4-5-agentic",
 			Object:              "model",

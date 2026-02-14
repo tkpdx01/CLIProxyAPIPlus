@@ -109,14 +109,13 @@ func (h *Handler) GetAPIKeys(c *gin.Context) { c.JSON(200, gin.H{"api-keys": h.c
 func (h *Handler) PutAPIKeys(c *gin.Context) {
 	h.putStringList(c, func(v []string) {
 		h.cfg.APIKeys = append([]string(nil), v...)
-		h.cfg.Access.Providers = nil
 	}, nil)
 }
 func (h *Handler) PatchAPIKeys(c *gin.Context) {
-	h.patchStringList(c, &h.cfg.APIKeys, func() { h.cfg.Access.Providers = nil })
+	h.patchStringList(c, &h.cfg.APIKeys, func() {})
 }
 func (h *Handler) DeleteAPIKeys(c *gin.Context) {
-	h.deleteFromStringList(c, &h.cfg.APIKeys, func() { h.cfg.Access.Providers = nil })
+	h.deleteFromStringList(c, &h.cfg.APIKeys, func() {})
 }
 
 // gemini-api-key: []GeminiKey
@@ -754,18 +753,22 @@ func (h *Handler) PatchOAuthModelAlias(c *gin.Context) {
 	normalizedMap := sanitizedOAuthModelAlias(map[string][]config.OAuthModelAlias{channel: body.Aliases})
 	normalized := normalizedMap[channel]
 	if len(normalized) == 0 {
+		// Only delete if channel exists, otherwise just create empty entry
+		if h.cfg.OAuthModelAlias != nil {
+			if _, ok := h.cfg.OAuthModelAlias[channel]; ok {
+				delete(h.cfg.OAuthModelAlias, channel)
+				if len(h.cfg.OAuthModelAlias) == 0 {
+					h.cfg.OAuthModelAlias = nil
+				}
+				h.persist(c)
+				return
+			}
+		}
+		// Create new channel with empty aliases
 		if h.cfg.OAuthModelAlias == nil {
-			c.JSON(404, gin.H{"error": "channel not found"})
-			return
+			h.cfg.OAuthModelAlias = make(map[string][]config.OAuthModelAlias)
 		}
-		if _, ok := h.cfg.OAuthModelAlias[channel]; !ok {
-			c.JSON(404, gin.H{"error": "channel not found"})
-			return
-		}
-		delete(h.cfg.OAuthModelAlias, channel)
-		if len(h.cfg.OAuthModelAlias) == 0 {
-			h.cfg.OAuthModelAlias = nil
-		}
+		h.cfg.OAuthModelAlias[channel] = []config.OAuthModelAlias{}
 		h.persist(c)
 		return
 	}

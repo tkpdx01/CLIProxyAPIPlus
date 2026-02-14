@@ -2,6 +2,7 @@ package test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	_ "github.com/router-for-me/CLIProxyAPI/v6/internal/thinking/provider/gemini"
 	_ "github.com/router-for-me/CLIProxyAPI/v6/internal/thinking/provider/geminicli"
 	_ "github.com/router-for-me/CLIProxyAPI/v6/internal/thinking/provider/iflow"
+	_ "github.com/router-for-me/CLIProxyAPI/v6/internal/thinking/provider/kimi"
 	_ "github.com/router-for-me/CLIProxyAPI/v6/internal/thinking/provider/openai"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/registry"
@@ -2588,6 +2590,135 @@ func TestThinkingE2EMatrix_Body(t *testing.T) {
 	runThinkingTests(t, cases)
 }
 
+// TestThinkingE2EClaudeAdaptive_Body tests Claude thinking.type=adaptive extended body-only cases.
+// These cases validate that adaptive means "thinking enabled without explicit budget", and
+// cross-protocol conversion should resolve to target-model maximum thinking capability.
+func TestThinkingE2EClaudeAdaptive_Body(t *testing.T) {
+	reg := registry.GetGlobalRegistry()
+	uid := fmt.Sprintf("thinking-e2e-claude-adaptive-%d", time.Now().UnixNano())
+
+	reg.RegisterClient(uid, "test", getTestModels())
+	defer reg.UnregisterClient(uid)
+
+	cases := []thinkingTestCase{
+		// A1: Claude adaptive to OpenAI level model -> highest supported level
+		{
+			name:        "A1",
+			from:        "claude",
+			to:          "openai",
+			model:       "level-model",
+			inputJSON:   `{"model":"level-model","messages":[{"role":"user","content":"hi"}],"thinking":{"type":"adaptive"}}`,
+			expectField: "reasoning_effort",
+			expectValue: "high",
+			expectErr:   false,
+		},
+		// A2: Claude adaptive to Gemini level subset model -> highest supported level
+		{
+			name:            "A2",
+			from:            "claude",
+			to:              "gemini",
+			model:           "level-subset-model",
+			inputJSON:       `{"model":"level-subset-model","messages":[{"role":"user","content":"hi"}],"thinking":{"type":"adaptive"}}`,
+			expectField:     "generationConfig.thinkingConfig.thinkingLevel",
+			expectValue:     "high",
+			includeThoughts: "true",
+			expectErr:       false,
+		},
+		// A3: Claude adaptive to Gemini budget model -> max budget
+		{
+			name:            "A3",
+			from:            "claude",
+			to:              "gemini",
+			model:           "gemini-budget-model",
+			inputJSON:       `{"model":"gemini-budget-model","messages":[{"role":"user","content":"hi"}],"thinking":{"type":"adaptive"}}`,
+			expectField:     "generationConfig.thinkingConfig.thinkingBudget",
+			expectValue:     "20000",
+			includeThoughts: "true",
+			expectErr:       false,
+		},
+		// A4: Claude adaptive to Gemini mixed model -> highest supported level
+		{
+			name:            "A4",
+			from:            "claude",
+			to:              "gemini",
+			model:           "gemini-mixed-model",
+			inputJSON:       `{"model":"gemini-mixed-model","messages":[{"role":"user","content":"hi"}],"thinking":{"type":"adaptive"}}`,
+			expectField:     "generationConfig.thinkingConfig.thinkingLevel",
+			expectValue:     "high",
+			includeThoughts: "true",
+			expectErr:       false,
+		},
+		// A5: Claude adaptive passthrough for same protocol
+		{
+			name:        "A5",
+			from:        "claude",
+			to:          "claude",
+			model:       "claude-budget-model",
+			inputJSON:   `{"model":"claude-budget-model","messages":[{"role":"user","content":"hi"}],"thinking":{"type":"adaptive"}}`,
+			expectField: "thinking.type",
+			expectValue: "adaptive",
+			expectErr:   false,
+		},
+		// A6: Claude adaptive to Antigravity budget model -> max budget
+		{
+			name:            "A6",
+			from:            "claude",
+			to:              "antigravity",
+			model:           "antigravity-budget-model",
+			inputJSON:       `{"model":"antigravity-budget-model","messages":[{"role":"user","content":"hi"}],"thinking":{"type":"adaptive"}}`,
+			expectField:     "request.generationConfig.thinkingConfig.thinkingBudget",
+			expectValue:     "20000",
+			includeThoughts: "true",
+			expectErr:       false,
+		},
+		// A7: Claude adaptive to iFlow GLM -> enabled boolean
+		{
+			name:        "A7",
+			from:        "claude",
+			to:          "iflow",
+			model:       "glm-test",
+			inputJSON:   `{"model":"glm-test","messages":[{"role":"user","content":"hi"}],"thinking":{"type":"adaptive"}}`,
+			expectField: "chat_template_kwargs.enable_thinking",
+			expectValue: "true",
+			expectErr:   false,
+		},
+		// A8: Claude adaptive to iFlow MiniMax -> enabled boolean
+		{
+			name:        "A8",
+			from:        "claude",
+			to:          "iflow",
+			model:       "minimax-test",
+			inputJSON:   `{"model":"minimax-test","messages":[{"role":"user","content":"hi"}],"thinking":{"type":"adaptive"}}`,
+			expectField: "reasoning_split",
+			expectValue: "true",
+			expectErr:   false,
+		},
+		// A9: Claude adaptive to Codex level model -> highest supported level
+		{
+			name:        "A9",
+			from:        "claude",
+			to:          "codex",
+			model:       "level-model",
+			inputJSON:   `{"model":"level-model","messages":[{"role":"user","content":"hi"}],"thinking":{"type":"adaptive"}}`,
+			expectField: "reasoning.effort",
+			expectValue: "high",
+			expectErr:   false,
+		},
+		// A10: Claude adaptive on non-thinking model should still be stripped
+		{
+			name:        "A10",
+			from:        "claude",
+			to:          "openai",
+			model:       "no-thinking-model",
+			inputJSON:   `{"model":"no-thinking-model","messages":[{"role":"user","content":"hi"}],"thinking":{"type":"adaptive"}}`,
+			expectField: "",
+			expectErr:   false,
+		},
+	}
+
+	runThinkingTests(t, cases)
+}
+
 // getTestModels returns the shared model definitions for E2E tests.
 func getTestModels() []*registry.ModelInfo {
 	return []*registry.ModelInfo{
@@ -2778,12 +2909,18 @@ func runThinkingTests(t *testing.T, cases []thinkingTestCase) {
 
 			// Verify clear_thinking for iFlow GLM models when enable_thinking=true
 			if tc.to == "iflow" && tc.expectField == "chat_template_kwargs.enable_thinking" && tc.expectValue == "true" {
+				baseModel := thinking.ParseSuffix(tc.model).ModelName
+				isGLM := strings.HasPrefix(strings.ToLower(baseModel), "glm")
 				ctVal := gjson.GetBytes(body, "chat_template_kwargs.clear_thinking")
-				if !ctVal.Exists() {
-					t.Fatalf("expected clear_thinking field not found for GLM model, body=%s", string(body))
-				}
-				if ctVal.Bool() != false {
-					t.Fatalf("clear_thinking: expected false, got %v, body=%s", ctVal.Bool(), string(body))
+				if isGLM {
+					if !ctVal.Exists() {
+						t.Fatalf("expected clear_thinking field not found for GLM model, body=%s", string(body))
+					}
+					if ctVal.Bool() != false {
+						t.Fatalf("clear_thinking: expected false, got %v, body=%s", ctVal.Bool(), string(body))
+					}
+				} else if ctVal.Exists() {
+					t.Fatalf("expected no clear_thinking field for non-GLM enable_thinking model, body=%s", string(body))
 				}
 			}
 		})

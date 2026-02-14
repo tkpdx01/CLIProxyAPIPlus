@@ -7,16 +7,19 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	copilotauth "github.com/router-for-me/CLIProxyAPI/v6/internal/auth/copilot"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/thinking"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v6/sdk/translator"
 	log "github.com/sirupsen/logrus"
+	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
 
@@ -32,11 +35,11 @@ const (
 	maxScannerBufferSize = 20_971_520
 
 	// Copilot API header values.
-	copilotUserAgent     = "GithubCopilot/1.0"
-	copilotEditorVersion = "vscode/1.100.0"
-	copilotPluginVersion = "copilot/1.300.0"
+	copilotUserAgent     = "GitHubCopilotChat/0.35.0"
+	copilotEditorVersion = "vscode/1.107.0"
+	copilotPluginVersion = "copilot-chat/0.35.0"
 	copilotIntegrationID = "vscode-chat"
-	copilotOpenAIIntent  = "conversation-panel"
+	copilotOpenAIIntent  = "conversation-edits"
 )
 
 // GitHubCopilotExecutor handles requests to the GitHub Copilot API.
@@ -76,7 +79,7 @@ func (e *GitHubCopilotExecutor) PrepareRequest(req *http.Request, auth *cliproxy
 	if errToken != nil {
 		return errToken
 	}
-	e.applyHeaders(req, apiToken)
+	e.applyHeaders(req, apiToken, nil)
 	return nil
 }
 
@@ -119,6 +122,7 @@ func (e *GitHubCopilotExecutor) Execute(ctx context.Context, auth *cliproxyauth.
 	originalTranslated := sdktranslator.TranslateRequest(from, to, req.Model, originalPayload, false)
 	body := sdktranslator.TranslateRequest(from, to, req.Model, bytes.Clone(req.Payload), false)
 	body = e.normalizeModel(req.Model, body)
+	body = flattenAssistantContent(body)
 	requestedModel := payloadRequestedModel(opts, req.Model)
 	body = applyPayloadConfigWithRoot(e.cfg, req.Model, to.String(), "", body, originalTranslated, requestedModel)
 	body, _ = sjson.SetBytes(body, "stream", false)
@@ -132,7 +136,12 @@ func (e *GitHubCopilotExecutor) Execute(ctx context.Context, auth *cliproxyauth.
 	if err != nil {
 		return resp, err
 	}
-	e.applyHeaders(httpReq, apiToken)
+	e.applyHeaders(httpReq, apiToken, body)
+
+	// Add Copilot-Vision-Request header if the request contains vision content
+	if detectVisionContent(body) {
+		httpReq.Header.Set("Copilot-Vision-Request", "true")
+	}
 
 	var authID, authLabel, authType, authValue string
 	if auth != nil {
@@ -219,6 +228,7 @@ func (e *GitHubCopilotExecutor) ExecuteStream(ctx context.Context, auth *cliprox
 	originalTranslated := sdktranslator.TranslateRequest(from, to, req.Model, originalPayload, false)
 	body := sdktranslator.TranslateRequest(from, to, req.Model, bytes.Clone(req.Payload), true)
 	body = e.normalizeModel(req.Model, body)
+	body = flattenAssistantContent(body)
 	requestedModel := payloadRequestedModel(opts, req.Model)
 	body = applyPayloadConfigWithRoot(e.cfg, req.Model, to.String(), "", body, originalTranslated, requestedModel)
 	body, _ = sjson.SetBytes(body, "stream", true)
@@ -236,7 +246,12 @@ func (e *GitHubCopilotExecutor) ExecuteStream(ctx context.Context, auth *cliprox
 	if err != nil {
 		return nil, err
 	}
-	e.applyHeaders(httpReq, apiToken)
+	e.applyHeaders(httpReq, apiToken, body)
+
+	// Add Copilot-Vision-Request header if the request contains vision content
+	if detectVisionContent(body) {
+		httpReq.Header.Set("Copilot-Vision-Request", "true")
+	}
 
 	var authID, authLabel, authType, authValue string
 	if auth != nil {
@@ -403,7 +418,7 @@ func (e *GitHubCopilotExecutor) ensureAPIToken(ctx context.Context, auth *clipro
 }
 
 // applyHeaders sets the required headers for GitHub Copilot API requests.
-func (e *GitHubCopilotExecutor) applyHeaders(r *http.Request, apiToken string) {
+func (e *GitHubCopilotExecutor) applyHeaders(r *http.Request, apiToken string, body []byte) {
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("Authorization", "Bearer "+apiToken)
 	r.Header.Set("Accept", "application/json")
@@ -413,16 +428,95 @@ func (e *GitHubCopilotExecutor) applyHeaders(r *http.Request, apiToken string) {
 	r.Header.Set("Openai-Intent", copilotOpenAIIntent)
 	r.Header.Set("Copilot-Integration-Id", copilotIntegrationID)
 	r.Header.Set("X-Request-Id", uuid.NewString())
+
+	initiator := "user"
+	if len(body) > 0 {
+		if messages := gjson.GetBytes(body, "messages"); messages.Exists() && messages.IsArray() {
+			arr := messages.Array()
+			if len(arr) > 0 {
+				lastRole := arr[len(arr)-1].Get("role").String()
+				if lastRole != "" && lastRole != "user" {
+					initiator = "agent"
+				}
+			}
+		}
+	}
+	r.Header.Set("X-Initiator", initiator)
 }
 
-// normalizeModel is a no-op as GitHub Copilot accepts model names directly.
-// Model mapping should be done at the registry level if needed.
-func (e *GitHubCopilotExecutor) normalizeModel(_ string, body []byte) []byte {
+// detectVisionContent checks if the request body contains vision/image content.
+// Returns true if the request includes image_url or image type content blocks.
+func detectVisionContent(body []byte) bool {
+	// Parse messages array
+	messagesResult := gjson.GetBytes(body, "messages")
+	if !messagesResult.Exists() || !messagesResult.IsArray() {
+		return false
+	}
+
+	// Check each message for vision content
+	for _, message := range messagesResult.Array() {
+		content := message.Get("content")
+
+		// If content is an array, check each content block
+		if content.IsArray() {
+			for _, block := range content.Array() {
+				blockType := block.Get("type").String()
+				// Check for image_url or image type
+				if blockType == "image_url" || blockType == "image" {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+// normalizeModel strips the suffix (e.g. "(medium)") from the model name
+// before sending to GitHub Copilot, as the upstream API does not accept
+// suffixed model identifiers.
+func (e *GitHubCopilotExecutor) normalizeModel(model string, body []byte) []byte {
+	baseModel := thinking.ParseSuffix(model).ModelName
+	if baseModel != model {
+		body, _ = sjson.SetBytes(body, "model", baseModel)
+	}
 	return body
 }
 
 func useGitHubCopilotResponsesEndpoint(sourceFormat sdktranslator.Format) bool {
 	return sourceFormat.String() == "openai-response"
+}
+
+// flattenAssistantContent converts assistant message content from array format
+// to a joined string. GitHub Copilot requires assistant content as a string;
+// sending it as an array causes Claude models to re-answer all previous prompts.
+func flattenAssistantContent(body []byte) []byte {
+	messages := gjson.GetBytes(body, "messages")
+	if !messages.Exists() || !messages.IsArray() {
+		return body
+	}
+	result := body
+	for i, msg := range messages.Array() {
+		if msg.Get("role").String() != "assistant" {
+			continue
+		}
+		content := msg.Get("content")
+		if !content.Exists() || !content.IsArray() {
+			continue
+		}
+		var textParts []string
+		for _, part := range content.Array() {
+			if part.Get("type").String() == "text" {
+				if t := part.Get("text").String(); t != "" {
+					textParts = append(textParts, t)
+				}
+			}
+		}
+		joined := strings.Join(textParts, "")
+		path := fmt.Sprintf("messages.%d.content", i)
+		result, _ = sjson.SetBytes(result, path, joined)
+	}
+	return result
 }
 
 // isHTTPSuccess checks if the status code indicates success (2xx).

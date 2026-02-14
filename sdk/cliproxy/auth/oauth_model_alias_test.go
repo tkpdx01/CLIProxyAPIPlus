@@ -80,6 +80,33 @@ func TestResolveOAuthUpstreamModel_SuffixPreservation(t *testing.T) {
 			want:    "gemini-2.5-pro-exp-03-25(none)",
 		},
 		{
+			name: "github-copilot suffix preserved",
+			aliases: map[string][]internalconfig.OAuthModelAlias{
+				"github-copilot": {{Name: "claude-opus-4.6", Alias: "opus"}},
+			},
+			channel: "github-copilot",
+			input:   "opus(medium)",
+			want:    "claude-opus-4.6(medium)",
+		},
+		{
+			name: "github-copilot no suffix",
+			aliases: map[string][]internalconfig.OAuthModelAlias{
+				"github-copilot": {{Name: "claude-opus-4.6", Alias: "opus"}},
+			},
+			channel: "github-copilot",
+			input:   "opus",
+			want:    "claude-opus-4.6",
+		},
+		{
+			name: "kimi suffix preserved",
+			aliases: map[string][]internalconfig.OAuthModelAlias{
+				"kimi": {{Name: "kimi-k2.5", Alias: "k2.5"}},
+			},
+			channel: "kimi",
+			input:   "k2.5(high)",
+			want:    "kimi-k2.5(high)",
+		},
+		{
 			name: "case insensitive alias lookup with suffix",
 			aliases: map[string][]internalconfig.OAuthModelAlias{
 				"gemini-cli": {{Name: "gemini-2.5-pro-exp-03-25", Alias: "Gemini-2.5-Pro"}},
@@ -161,10 +188,38 @@ func createAuthForChannel(channel string) *Auth {
 		return &Auth{Provider: "qwen"}
 	case "iflow":
 		return &Auth{Provider: "iflow"}
+	case "kimi":
+		return &Auth{Provider: "kimi"}
 	case "kiro":
 		return &Auth{Provider: "kiro"}
+	case "github-copilot":
+		return &Auth{Provider: "github-copilot"}
 	default:
 		return &Auth{Provider: channel}
+	}
+}
+
+func TestOAuthModelAliasChannel_Kimi(t *testing.T) {
+	t.Parallel()
+
+	if got := OAuthModelAliasChannel("kimi", "oauth"); got != "kimi" {
+		t.Fatalf("OAuthModelAliasChannel() = %q, want %q", got, "kimi")
+	}
+}
+
+func TestOAuthModelAliasChannel_GitHubCopilot(t *testing.T) {
+	t.Parallel()
+
+	if got := OAuthModelAliasChannel("github-copilot", ""); got != "github-copilot" {
+		t.Fatalf("OAuthModelAliasChannel() = %q, want %q", got, "github-copilot")
+	}
+}
+
+func TestOAuthModelAliasChannel_Kiro(t *testing.T) {
+	t.Parallel()
+
+	if got := OAuthModelAliasChannel("kiro", ""); got != "kiro" {
+		t.Fatalf("OAuthModelAliasChannel() = %q, want %q", got, "kiro")
 	}
 }
 

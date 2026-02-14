@@ -58,6 +58,9 @@ type Service struct {
 	// server is the HTTP API server instance.
 	server *api.Server
 
+	// pprofServer manages the optional pprof HTTP debug server.
+	pprofServer *pprofServer
+
 	// serverErr channel for server startup/shutdown errors.
 	serverErr chan error
 
@@ -281,27 +284,42 @@ func (s *Service) wsOnDisconnected(channelID string, reason error) {
 }
 
 func (s *Service) applyCoreAuthAddOrUpdate(ctx context.Context, auth *coreauth.Auth) {
-	if s == nil || auth == nil || auth.ID == "" {
-		return
-	}
-	if s.coreManager == nil {
+	if s == nil || s.coreManager == nil || auth == nil || auth.ID == "" {
 		return
 	}
 	auth = auth.Clone()
 	s.ensureExecutorsForAuth(auth)
-	s.registerModelsForAuth(auth)
-	if existing, ok := s.coreManager.GetByID(auth.ID); ok && existing != nil {
+
+	// IMPORTANT: Update coreManager FIRST, before model registration.
+	// This ensures that configuration changes (proxy_url, prefix, etc.) take effect
+	// immediately for API calls, rather than waiting for model registration to complete.
+	// Model registration may involve network calls (e.g., FetchAntigravityModels) that
+	// could timeout if the new proxy_url is unreachable.
+	op := "register"
+	var err error
+	if existing, ok := s.coreManager.GetByID(auth.ID); ok {
 		auth.CreatedAt = existing.CreatedAt
 		auth.LastRefreshedAt = existing.LastRefreshedAt
 		auth.NextRefreshAfter = existing.NextRefreshAfter
-		if _, err := s.coreManager.Update(ctx, auth); err != nil {
-			log.Errorf("failed to update auth %s: %v", auth.ID, err)
+		op = "update"
+		_, err = s.coreManager.Update(ctx, auth)
+	} else {
+		_, err = s.coreManager.Register(ctx, auth)
+	}
+	if err != nil {
+		log.Errorf("failed to %s auth %s: %v", op, auth.ID, err)
+		current, ok := s.coreManager.GetByID(auth.ID)
+		if !ok || current.Disabled {
+			GlobalModelRegistry().UnregisterClient(auth.ID)
+			return
 		}
-		return
+		auth = current
 	}
-	if _, err := s.coreManager.Register(ctx, auth); err != nil {
-		log.Errorf("failed to register auth %s: %v", auth.ID, err)
-	}
+
+	// Register models after auth is updated in coreManager.
+	// This operation may block on network calls, but the auth configuration
+	// is already effective at this point.
+	s.registerModelsForAuth(auth)
 }
 
 func (s *Service) applyCoreAuthRemoval(ctx context.Context, id string) {
@@ -391,6 +409,8 @@ func (s *Service) ensureExecutorsForAuth(a *coreauth.Auth) {
 		s.coreManager.RegisterExecutor(executor.NewQwenExecutor(s.cfg))
 	case "iflow":
 		s.coreManager.RegisterExecutor(executor.NewIFlowExecutor(s.cfg))
+	case "kimi":
+		s.coreManager.RegisterExecutor(executor.NewKimiExecutor(s.cfg))
 	case "kiro":
 		s.coreManager.RegisterExecutor(executor.NewKiroExecutor(s.cfg))
 	case "github-copilot":
@@ -516,6 +536,8 @@ func (s *Service) Run(ctx context.Context) error {
 	time.Sleep(100 * time.Millisecond)
 	fmt.Printf("API server started successfully on: %s:%d\n", s.cfg.Host, s.cfg.Port)
 
+	s.applyPprofConfig(s.cfg)
+
 	if s.hooks.OnAfterStart != nil {
 		s.hooks.OnAfterStart(s)
 	}
@@ -558,10 +580,10 @@ func (s *Service) Run(ctx context.Context) error {
 				selector = &coreauth.RoundRobinSelector{}
 			}
 			s.coreManager.SetSelector(selector)
-			log.Infof("routing strategy updated to %s", nextStrategy)
 		}
 
 		s.applyRetryConfig(newCfg)
+		s.applyPprofConfig(newCfg)
 		if s.server != nil {
 			s.server.UpdateClients(newCfg)
 		}
@@ -667,6 +689,13 @@ func (s *Service) Shutdown(ctx context.Context) error {
 			s.authQueueStop = nil
 		}
 
+		if errShutdownPprof := s.shutdownPprof(ctx); errShutdownPprof != nil {
+			log.Errorf("failed to stop pprof server: %v", errShutdownPprof)
+			if shutdownErr == nil {
+				shutdownErr = errShutdownPprof
+			}
+		}
+
 		// no legacy clients to persist
 
 		if s.server != nil {
@@ -708,6 +737,10 @@ func (s *Service) registerModelsForAuth(a *coreauth.Auth) {
 	if a == nil || a.ID == "" {
 		return
 	}
+	if a.Disabled {
+		GlobalModelRegistry().UnregisterClient(a.ID)
+		return
+	}
 	authKind := strings.ToLower(strings.TrimSpace(a.Attributes["auth_kind"]))
 	if authKind == "" {
 		if kind, _ := a.AccountInfo(); strings.EqualFold(kind, "api_key") {
@@ -734,6 +767,13 @@ func (s *Service) registerModelsForAuth(a *coreauth.Auth) {
 		provider = "openai-compatibility"
 	}
 	excluded := s.oauthExcludedModels(provider, authKind)
+	// The synthesizer pre-merges per-account and global exclusions into the "excluded_models" attribute.
+	// If this attribute is present, it represents the complete list of exclusions and overrides the global config.
+	if a.Attributes != nil {
+		if val, ok := a.Attributes["excluded_models"]; ok && strings.TrimSpace(val) != "" {
+			excluded = strings.Split(val, ",")
+		}
+	}
 	var models []*ModelInfo
 	switch provider {
 	case "gemini":
@@ -795,6 +835,9 @@ func (s *Service) registerModelsForAuth(a *coreauth.Auth) {
 	case "iflow":
 		models = registry.GetIFlowModels()
 		models = applyExcludedModels(models, excluded)
+	case "kimi":
+		models = registry.GetKimiModels()
+    models = applyExcludedModels(models, excluded)
 	case "github-copilot":
 		models = registry.GetGitHubCopilotModels()
 		models = applyExcludedModels(models, excluded)
@@ -1412,29 +1455,44 @@ func (s *Service) fetchKiroModels(a *coreauth.Auth) []*ModelInfo {
 }
 
 // extractKiroTokenData extracts KiroTokenData from auth attributes and metadata.
+// It supports both config-based tokens (stored in Attributes) and file-based tokens (stored in Metadata).
 func (s *Service) extractKiroTokenData(a *coreauth.Auth) *kiroauth.KiroTokenData {
-	if a == nil || a.Attributes == nil {
+	if a == nil {
 		return nil
 	}
 
-	accessToken := strings.TrimSpace(a.Attributes["access_token"])
+	var accessToken, profileArn, refreshToken string
+
+	// Priority 1: Try to get from Attributes (config.yaml source)
+	if a.Attributes != nil {
+		accessToken = strings.TrimSpace(a.Attributes["access_token"])
+		profileArn = strings.TrimSpace(a.Attributes["profile_arn"])
+		refreshToken = strings.TrimSpace(a.Attributes["refresh_token"])
+	}
+
+	// Priority 2: If not found in Attributes, try Metadata (JSON file source)
+	if accessToken == "" && a.Metadata != nil {
+		if at, ok := a.Metadata["access_token"].(string); ok {
+			accessToken = strings.TrimSpace(at)
+		}
+		if pa, ok := a.Metadata["profile_arn"].(string); ok {
+			profileArn = strings.TrimSpace(pa)
+		}
+		if rt, ok := a.Metadata["refresh_token"].(string); ok {
+			refreshToken = strings.TrimSpace(rt)
+		}
+	}
+
+	// access_token is required
 	if accessToken == "" {
 		return nil
 	}
 
-	tokenData := &kiroauth.KiroTokenData{
-		AccessToken: accessToken,
-		ProfileArn:  strings.TrimSpace(a.Attributes["profile_arn"]),
+	return &kiroauth.KiroTokenData{
+		AccessToken:  accessToken,
+		ProfileArn:   profileArn,
+		RefreshToken: refreshToken,
 	}
-
-	// Also try to get refresh token from metadata
-	if a.Metadata != nil {
-		if rt, ok := a.Metadata["refresh_token"].(string); ok {
-			tokenData.RefreshToken = rt
-		}
-	}
-
-	return tokenData
 }
 
 // convertKiroAPIModels converts Kiro API models to ModelInfo slice.
